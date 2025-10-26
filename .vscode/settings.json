@@ -1,0 +1,6 @@
+{
+    "C_Cpp.default.compilerPath": "/home/gmtii/.platformio/packages/toolchain-riscv32-esp/bin/riscv32-esp-elf-gcc",
+    "files.associations": {
+        "nau8822_map_reg.h": "c"
+    }
+}
