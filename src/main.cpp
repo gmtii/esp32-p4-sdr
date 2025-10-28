@@ -7,182 +7,209 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "lvgl.h"
+#include "pins_config.h"
+#include "src/lcd/jd9165_lcd.h"
+#include "src/touch/gt911_touch.h"
+
+#include "esp_lcd_mipi_dsi.h"
+
 #include <stdio.h>
 #include <string.h>
 
 #include "nau8822.h"
 
-static const char *TAG = "i2s_es8311";
-static const char err_reason[][30] = {"input param is invalid",
-                                      "operation timeout"
-                                    };
+#include "sdr.h"
 
-static i2s_chan_handle_t tx_handle = NULL;
-static i2s_chan_handle_t rx_handle = NULL;
+jd9165_lcd lcd = jd9165_lcd(LCD_RST);
+gt911_touch touch = gt911_touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
 
-i2c_master_bus_handle_t bus;
-i2c_master_dev_handle_t dev;
+lv_display_t *disp_drv;
+static lv_color_t *buf0;
+static lv_color_t *buf1;
 
-#define SAMPLE_BUFFER_SIZE (512)
-#define SAMPLE_RATE (48000)
-#define MCLK_MULTIPLE I2S_MCLK_MULTIPLE_256 // If not using 24-bit data width, 256 should be enough
-#define MCLK_FREQ_HZ (SAMPLE_RATE * MCLK_MULTIPLE)
-#define VOICE_VOLUME CONFIG_VOICE_VOLUME
+const int freq = 5000;
+const int ledChannel = 0;
+const int resolution = 8;
 
-#define I2S_NUM (I2S_NUM_0)
-#define I2S_MCK_IO (GPIO_NUM_1)
+/* The my_disp_flush function is a display flushing callback for the LVGL graphics library, responsible for rendering
+a specified area of the display (area) using the provided color map (color_map). It draws the bitmap to the screen using
+lcd.lcd_draw_bitmap and signals LVGL that the flushing operation is complete by calling lv_display_flush_ready.
+ */
 
-#define I2S_WS_IO (GPIO_NUM_5)
-#define I2S_BCK_IO (GPIO_NUM_4)
-#define I2S_DO_IO (GPIO_NUM_3)
-#define I2S_DI_IO (GPIO_NUM_2)
+static SemaphoreHandle_t s_flush_sem; // Semáforo para sincronizar el flush con el ISR
 
-#define I2C_NUM (I2C_NUM_0)
-#define I2C_SDA_IO GPIO_NUM_7
-#define I2C_SCL_IO GPIO_NUM_8
+/* Se llama en contexto de ISR. Mantenerlo ultracorto. */
 
-static esp_err_t i2c_driver_init(void)
+static bool IRAM_ATTR panel_eof_isr(esp_lcd_panel_handle_t panel_handle,
+                                    esp_lcd_dpi_panel_event_data_t *edata,
+                                    void *user_ctx)
 {
-  /* Initialize I2C peripheral */
-
-  i2c_master_bus_config_t bus_cfg = {
-      .i2c_port = I2C_NUM,
-      .sda_io_num = I2C_SDA_IO,
-      .scl_io_num = I2C_SCL_IO,
-      .clk_source = I2C_CLK_SRC_DEFAULT,
-      .glitch_ignore_cnt = 7,
-  };
-
-  ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus)); // crea el bus
-
-  // --- 3️⃣ Añade un dispositivo esclavo al bus ---
-  i2c_device_config_t dev_cfg = {
-      .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-      .device_address = 0x1A, // Dirección del dispositivo I2C
-      .scl_speed_hz = 100000, // Frecuencia 100 kHz
-  };
-
-  ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_cfg, &dev));
+  BaseType_t need_yield = pdFALSE;
+  SemaphoreHandle_t sem = (SemaphoreHandle_t)user_ctx;
+  if (sem)
+    xSemaphoreGiveFromISR(sem, &need_yield);
+  return (need_yield == pdTRUE); // permite yield desde ISR si hace falta
 }
 
-static esp_err_t i2s_driver_init(void)
+void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *color_map)
 {
-
-  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM, I2S_ROLE_MASTER);
-  chan_cfg.auto_clear = true; // Limpia DMA legacy
-  ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle, &rx_handle));
-
-  i2s_std_config_t std_cfg = {
-      .clk_cfg = {
-          .sample_rate_hz = 192000,      // 192 kHz
-          .clk_src = I2S_CLK_SRC_APLL,   // APLL en P4
-          .mclk_multiple = MCLK_MULTIPLE // define en sdkconfig.h (256 recomendado)
-      },
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
-      .gpio_cfg = {
-          .mclk = I2S_MCK_IO,
-          .bclk = I2S_BCK_IO,
-          .ws = I2S_WS_IO,
-          .dout = I2S_DO_IO,
-          .din = I2S_DI_IO,
-          .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
-      },
-  };
-
-  ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle, &std_cfg));
-  ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle, &std_cfg));
-  ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
-  ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
-
-  return ESP_OK;
+  const int offsetx1 = area->x1;
+  const int offsetx2 = area->x2;
+  const int offsety1 = area->y1;
+  const int offsety2 = area->y2;
+  lcd.lcd_draw_bitmap(offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+  // lv_display_flush_ready(disp);  // Usa el callback de espera para esto
 }
 
-union
+static void my_flush_wait_cb(lv_display_t *d)
 {
-  uint32_t sample;
-  int16_t ch[2];
-} sampleData_in[SAMPLE_BUFFER_SIZE];
+  // Espera a que el ISR libere el semáforo
+  if (s_flush_sem)
+    xSemaphoreTake(s_flush_sem, portMAX_DELAY);
+}
 
-union
+/* The my_touchpad_read function reads touch input data from a touchpad device and updates the provided lv_indev_data_t
+structure with the touch state and coordinates. If the touchpad is not touched, the state is set to LV_INDEV_STATE_REL;
+otherwise, it is set to LV_INDEV_STATE_PR, and the touch coordinates are logged via Serial.printf.  */
+
+void my_touchpad_read(lv_indev_t *indev_driver, lv_indev_data_t *data)
 {
-  uint32_t sample;
-  int16_t ch[2];
-} sampleData_out[SAMPLE_BUFFER_SIZE];
+  bool touched;
+  uint16_t touchX, touchY;
 
-static void i2s_echo(void *args)
-{
+  touched = touch.getTouch(&touchX, &touchY);
 
-  esp_err_t ret = ESP_OK;
-  size_t bytes_read = 0;
-  size_t bytes_write = 0;
-  Serial.printf("[echo] Echo start");
-
-  while (1)
+  if (!touched)
   {
-    /* Lee i2s ADC */
-    ret = i2s_channel_read(rx_handle, (char *)&sampleData_in[0].sample, SAMPLE_BUFFER_SIZE * 4, &bytes_read, 1000);
-
-    for (int i = 0; i < SAMPLE_BUFFER_SIZE; i++)
-    {
-      sampleData_out[i].ch[0] = sampleData_in[i].ch[0];
-      sampleData_out[i].ch[1] = sampleData_in[i].ch[1];
-    }
-
-    // Envia el DAC SAMPLE_BUFFER_SIZE * 4 ( 2 canales, 16 bit cada uno)
-    ret = i2s_channel_write(tx_handle, (char *)&sampleData_out[0].sample, SAMPLE_BUFFER_SIZE * 4, &bytes_write, 1000);
+    data->state = LV_INDEV_STATE_REL;
   }
-  vTaskDelete(NULL);
+  else
+  {
+    data->state = LV_INDEV_STATE_PR;
+
+    data->point.x = touchX;
+    data->point.y = touchY;
+    // Serial.printf("x=%d,y=%d \r\n", touchX, touchY);
+  }
+}
+
+void my_print(lv_log_level_t level, const char *buf)
+{
+  Serial.printf(buf);
+  Serial.flush();
+}
+
+/*use Arduinos millis() as tick source*/
+static uint32_t my_tick(void)
+{
+  return millis();
 }
 
 void setup()
 {
   Serial.begin(115200);
 
-  Serial.printf("MCLK =  %d\n", MCLK_FREQ_HZ);
+  lcd.begin();
+  touch.begin();
 
-  i2s_driver_init();
+  pinMode(LCD_LED, OUTPUT);
+  ledcAttach(LCD_LED, freq, resolution);
+  ledcWrite(LCD_LED, 25);
 
-  Serial.println("Setup done");
+  i2s_driver_init(192200);
 
+  lv_init();
+
+  // === Buffer parcial: N líneas ===
+  size_t px_cnt = (size_t)LCD_H_RES * LCD_V_RES;  // nº de píxeles del buffer
+  size_t buf_bytes = px_cnt * sizeof(lv_color_t); // bytes reales
+
+  // Reserva en PSRAM DMA-capable
+  buf0 = (lv_color_t *)heap_caps_aligned_alloc(
+      4, buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+  buf1 = (lv_color_t *)heap_caps_aligned_alloc(
+      4, buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+
+  assert(buf0);
+  assert(buf1);
+
+  disp_drv = lv_display_create(LCD_H_RES, LCD_V_RES);
+
+  s_flush_sem = xSemaphoreCreateBinary();
+  esp_lcd_dpi_panel_event_callbacks_t cbs = {
+      .on_color_trans_done = panel_eof_isr, // “EOF” de frame/transfer finalizada
+                                            // (si en tu IDF aparecen más eventos, puedes añadirlos aquí)
+  };
+  esp_lcd_dpi_panel_register_event_callbacks(panel_handle /* handle */,
+                                             &cbs,
+                                             s_flush_sem /* user_ctx */);
+
+  lv_display_set_flush_cb(disp_drv, my_disp_flush);
+  lv_display_set_flush_wait_cb(disp_drv, my_flush_wait_cb);
+
+  lv_display_set_buffers(disp_drv, buf0, buf1, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  /*Initialize the display*/
+
+  lv_indev_t *indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, my_touchpad_read);
+
+#if LV_USE_LOG
+  lv_log_register_print_cb(my_print);
+#endif
+
+  lv_tick_set_cb(my_tick);
+
+  /* Iniciando CODEC */
   nau8822_init(2); // Modo de inicialización del NAU8822
 
   xTaskCreate(i2s_echo, "i2s_echo", 8192, NULL, 5, NULL);
 }
 
-static void play_tone(float freq_hz, uint32_t ms)
+void test_pin(void)
+
 {
-  const float amplitude = 0.5f; // 0.0–1.0
-  const int16_t max_amp = (int16_t)(32767 * amplitude);
-  const int samples_per_period = (int)((float)48000 / freq_hz);
-  const size_t frames_total = (48000 * ms) / 1000;
-  const size_t chunk_frames = 256; // tamaño de bloque DMA
-  int16_t buffer[chunk_frames * 2];
 
-  ESP_LOGI(TAG, "Generando %.1f Hz durante %u ms", freq_hz, ms);
+  pinMode(GPIO_NUM_45, OUTPUT);
+  pinMode(GPIO_NUM_46, OUTPUT);
+  pinMode(GPIO_NUM_47, OUTPUT);
+  pinMode(GPIO_NUM_48, OUTPUT);
+  pinMode(GPIO_NUM_5, OUTPUT);
+  pinMode(GPIO_NUM_4, OUTPUT);
+  pinMode(GPIO_NUM_3, OUTPUT);
+  pinMode(GPIO_NUM_2, OUTPUT);
 
-  for (size_t pos = 0; pos < frames_total;)
+  while (1)
   {
-    size_t frames_now = (frames_total - pos > chunk_frames)
-                            ? chunk_frames
-                            : (frames_total - pos);
+    digitalWrite(GPIO_NUM_45, HIGH);
+    digitalWrite(GPIO_NUM_46, HIGH);
+    digitalWrite(GPIO_NUM_47, HIGH);
+    digitalWrite(GPIO_NUM_48, HIGH);
+    digitalWrite(GPIO_NUM_5, HIGH);
+    digitalWrite(GPIO_NUM_4, HIGH);
+    digitalWrite(GPIO_NUM_3, HIGH);
+    digitalWrite(GPIO_NUM_2, HIGH);
 
-    for (size_t i = 0; i < frames_now; i++)
-    {
-      float theta = 2.0f * M_PI * (float)((pos + i) % samples_per_period) / samples_per_period;
-      int16_t s = (int16_t)(sinf(theta) * max_amp);
-      buffer[i * 2 + 0] = s; // canal L
-      buffer[i * 2 + 1] = s; // canal R
-    }
+    delay(100);
 
-    size_t bytes_to_write = frames_now * 2 * sizeof(int16_t);
-    size_t written = 0;
-    ESP_ERROR_CHECK(i2s_channel_write(tx_handle, buffer, bytes_to_write, &written, portMAX_DELAY));
-    pos += frames_now;
+    // digitalWrite(GPIO_NUM_45, LOW);
+    digitalWrite(GPIO_NUM_46, LOW);
+    digitalWrite(GPIO_NUM_47, LOW);
+    digitalWrite(GPIO_NUM_48, LOW);
+    digitalWrite(GPIO_NUM_5, LOW);
+    digitalWrite(GPIO_NUM_4, LOW);
+    digitalWrite(GPIO_NUM_3, LOW);
+    digitalWrite(GPIO_NUM_2, LOW);
+
+    delay(100);
   }
 }
 
 void loop()
 {
+
   while (1)
   {
     vTaskDelay(pdMS_TO_TICKS(500));
