@@ -1,131 +1,272 @@
 #include <Arduino.h>
-#include "driver/i2c_master.h"
-#include "driver/i2s_std.h"
-#include "driver/gpio.h"
-#include "esp_system.h"
-#include "esp_check.h"
-#include "esp_err.h"
-#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
-#include "nau8822.h"
+#include "esp_dsp.h"
+#include "driver/i2s_std.h"
+
+#include "sdr_math.h"
+
+#include "esp_mac.h"
+
+#include "ui.h"
 
 #include "sdr.h"
+#include "sdr_priv.h"
 
-static i2s_chan_handle_t tx_handle = NULL;
-static i2s_chan_handle_t rx_handle = NULL;
-
-i2c_master_bus_handle_t bus;
-i2c_master_dev_handle_t dev;
-
-static esp_err_t i2c_driver_init(void)
+float IRAM_ATTR alpha_beta_mag(float inphase, float quadrature)
+// (c) András Retzler
+// taken from libcsdr: https://github.com/simonyiszk/csdr
 {
-    /* Initialize I2C peripheral */
-
-    i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = I2C_NUM,
-        .sda_io_num = I2C_SDA_IO,
-        .scl_io_num = I2C_SCL_IO,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-    };
-
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus)); // crea el bus
-
-    // --- 3️⃣ Añade un dispositivo esclavo al bus ---
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x1A, // Dirección del dispositivo I2C
-        .scl_speed_hz = 100000, // Frecuencia 100 kHz
-    };
-
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_cfg, &dev));
-}
-
-void i2s_driver_init(uint32_t sample_rate)
-{
-
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM, I2S_ROLE_MASTER);
-    chan_cfg.auto_clear = true; // Limpia DMA legacy
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle, &rx_handle));
-
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = {
-            .sample_rate_hz = sample_rate, // 192 kHz
-            .clk_src = I2S_CLK_SRC_APLL,      // APLL en P4
-            .mclk_multiple = MCLK_MULTIPLE    // define en sdkconfig.h (256 recomendado)
-        },
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_MCK_IO,
-            .bclk = I2S_BCK_IO,
-            .ws = I2S_WS_IO,
-            .dout = I2S_DO_IO,
-            .din = I2S_DI_IO,
-            .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
-        },
-    };
-
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(tx_handle));
-    ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
-
-}
-
-static void play_tone(float freq_hz, uint32_t ms)
-{
-    const float amplitude = 0.5f; // 0.0–1.0
-    const int16_t max_amp = (int16_t)(32767 * amplitude);
-    const int samples_per_period = (int)((float)48000 / freq_hz);
-    const size_t frames_total = (48000 * ms) / 1000;
-    const size_t chunk_frames = 256; // tamaño de bloque DMA
-    int16_t buffer[chunk_frames * 2];
-
-    ESP_LOGI(TAG, "Generando %.1f Hz durante %u ms", freq_hz, ms);
-
-    for (size_t pos = 0; pos < frames_total;)
+    // Min RMS Err      0.947543636291 0.392485425092
+    // Min Peak Err     0.960433870103 0.397824734759
+    // Min RMS w/ Avg=0 0.948059448969 0.392699081699
+    const float alpha = 0.960433870103; // 1.0; //0.947543636291;
+    const float beta = 0.397824734759;
+    /* magnitude ~= alpha * max(|I|, |Q|) + beta * min(|I|, |Q|) */
+    float abs_inphase = fabs(inphase);
+    float abs_quadrature = fabs(quadrature);
+    if (abs_inphase > abs_quadrature)
     {
-        size_t frames_now = (frames_total - pos > chunk_frames)
-                                ? chunk_frames
-                                : (frames_total - pos);
-
-        for (size_t i = 0; i < frames_now; i++)
-        {
-            float theta = 2.0f * M_PI * (float)((pos + i) % samples_per_period) / samples_per_period;
-            int16_t s = (int16_t)(sinf(theta) * max_amp);
-            buffer[i * 2 + 0] = s; // canal L
-            buffer[i * 2 + 1] = s; // canal R
-        }
-
-        size_t bytes_to_write = frames_now * 2 * sizeof(int16_t);
-        size_t written = 0;
-        ESP_ERROR_CHECK(i2s_channel_write(tx_handle, buffer, bytes_to_write, &written, portMAX_DELAY));
-        pos += frames_now;
+        return alpha * abs_inphase + beta * abs_quadrature;
+    }
+    else
+    {
+        return alpha * abs_quadrature + beta * abs_inphase;
     }
 }
 
-void i2s_echo(void *args)
+void IRAM_ATTR sdrTask(void *args)
 {
 
     esp_err_t ret = ESP_OK;
     size_t bytes_read = 0;
     size_t bytes_write = 0;
-    Serial.printf("[echo] Echo start");
+
+    // Filtro biquad LPF 48000 x 0.15 para modos AM
+
+    float coeffs_am[5];
+    float w_lpf_i[5] = {0, 0};
+    float w_lpf_q[5] = {0, 0};
+
+    dsps_biquad_gen_lpf_f32(coeffs_am, 0.05, 1); // Q=3
+
+    // Filtros FIR de I para SSB DSP ESP32 S3 (parecen algo más rápidoss que los CMSIS)
+
+    dsps_fir_init_f32(&fir_i, FIR_HILB_RX_I_coeffs, fir_i_State, IQ_NUM_TAPS);
+
+    // Filtros FIR de Q para SSB
+
+    dsps_fir_init_f32(&fir_q, FIR_HILB_RX_Q_coeffs, fir_q_State, IQ_NUM_TAPS);
+
+    int i = 0;
 
     while (1)
     {
         /* Lee i2s ADC */
         ret = i2s_channel_read(rx_handle, (char *)&sampleData_in[0].sample, SAMPLE_BUFFER_SIZE * 4, &bytes_read, 1000);
 
-        for (int i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+        /* Vectores para FFT */
+
+        for (i = 0; i < SAMPLE_BUFFER_SIZE; i++)
         {
-            sampleData_out[i].ch[0] = sampleData_in[i].ch[0];
-            sampleData_out[i].ch[1] = sampleData_in[i].ch[1];
+            i_sample[i] = ((float)sampleData_in[i].ch[0] / (float)(32768));
+            i_fft[i] = i_sample[i];
+            q_sample[i] = ((float)sampleData_in[i].ch[1] / (float)(32768));
+            q_fft[i] = q_sample[i];
+        }
+
+        if (demod_modo != DEMOD_FM)
+        {
+            // Ya estamos en CODEC_SAMPLERATE
+            // Hago una conversion de frecuencia a SR/4
+            // p.e. 192khz serán 48khz, por lo tanto 5.450 pasa a ser 5.402. Sintonizamos por abajo
+            // pero presentamos la frecuencia con esa suma de SR/4.
+            for (i = 0; i < SAMPLE_BUFFER_SIZE; i += 4)
+            { // i_sample_d contains I = real values
+                // i_sample_d contains Q = imaginary values
+                // xnew(0) =  xreal(0) + jximag(0)
+                // leave as it is!
+                // xnew(1) =  - ximag(1) + jxreal(1)
+                float hh1 = -q_sample[i + 1];
+                float hh2 = i_sample[i + 1];
+                i_sample[i + 1] = hh1;
+                q_sample[i + 1] = hh2;
+                // xnew(2) = -xreal(2) - jximag(2)
+                hh1 = -i_sample[i + 2];
+                hh2 = -q_sample[i + 2];
+                i_sample[i + 2] = hh1;
+                q_sample[i + 2] = hh2;
+                // xnew(3) = + ximag(3) - jxreal(3)
+                hh1 = q_sample[i + 3];
+                hh2 = -i_sample[i + 3];
+                i_sample[i + 3] = hh1;
+                q_sample[i + 3] = hh2;
+            }
+
+            if (demod_modo == DEMOD_USB || demod_modo == DEMOD_LSB) // En AM/SAM/FM no aplicamos desfase a Q
+            {
+                dsps_fir_f32(&fir_i, i_sample, i_sample_out, SAMPLE_BUFFER_SIZE);
+                dsps_fir_f32(&fir_q, q_sample, q_sample_out, SAMPLE_BUFFER_SIZE);
+            }
+            else
+            {
+                // Filtros AM
+                dsps_biquad_f32_arp4(i_sample, i_sample_out, SAMPLE_BUFFER_SIZE, coeffs_am, w_lpf_i);
+                dsps_biquad_f32_arp4(q_sample, q_sample_out, SAMPLE_BUFFER_SIZE, coeffs_am, w_lpf_q);
+            }
+        }
+
+        switch (demod_modo)
+        {
+
+        case DEMOD_FM:
+
+            float angle, x, y;
+            float a, b;
+
+            for (i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+            {
+                y = (q_sample[i] * fm_variables.i_sample_prev) - (i_sample[i] * fm_variables.q_sample_prev);
+                x = (i_sample[i] * fm_variables.i_sample_prev) + (q_sample[i] * fm_variables.q_sample_prev);
+
+                angle = ApproxAtan2(y, x);
+
+                if (isnanf(angle))
+                {
+                    angle = 0.0f;
+                }
+
+                demod_out[i] = (float)(angle / PI) * 0.1f;
+
+                fm_variables.q_sample_prev = q_sample[i]; // save "previous" value of each channel to allow detection of the change of angle in next go-around
+                fm_variables.i_sample_prev = i_sample[i];
+            }
+            break;
+
+        case DEMOD_USB:
+            dsps_add_f32(i_sample_out, q_sample_out, demod_out, SAMPLE_BUFFER_SIZE, 1, 1, 1); // Demodula USB
+            break;
+
+        case DEMOD_LSB:
+            dsps_sub_f32(i_sample_out, q_sample_out, demod_out, SAMPLE_BUFFER_SIZE, 1, 1, 1); // Demodula LSB
+            break;
+
+        case DEMOD_SAM: 
+        case DEMOD_SAML:
+        case DEMOD_SAMU:
+        case DEMOD_AM: // Demodula AM con las IQ resultantes del LPF
+            for (i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+            {
+                audiotmp = alpha_beta_mag(i_sample_out[i], q_sample_out[i]);
+                w = audiotmp + wold * 0.9999f; // yes, I want a superb bass response ;-)
+                demod_out[i] = w - wold;
+                wold = w;
+            }
+            break;
+        }
+
+        /* Pongo entrada en salida */
+
+        if (!bucle)
+        {
+            for (i = 0; i < SAMPLE_BUFFER_SIZE; i++) // convierte a int16
+            {
+                sampleData_out[i].ch[0] = int16_t(demod_out[i] * (float)32768.0f);
+                sampleData_out[i].ch[1] = int16_t(demod_out[i] * (float)32768.0f); // segundo canal para el SFM
+
+                if (sampleData_out[i].ch[0] > 32767)
+                    sampleData_out[i].ch[0] = 32767;
+                if (sampleData_out[i].ch[1] > 32767)
+                    sampleData_out[i].ch[1] = 32767;
+
+                if (sampleData_out[i].ch[0] < -32767)
+                    sampleData_out[i].ch[0] = -32767;
+                if (sampleData_out[i].ch[1] < -32767)
+                    sampleData_out[i].ch[1] = -32767;
+            }
+        }
+        else
+        {
+            for (i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+            {
+                sampleData_out[i].ch[0] = sampleData_in[i].ch[0];
+                sampleData_out[i].ch[1] = sampleData_in[i].ch[1];
+            }
         }
 
         // Envia el DAC SAMPLE_BUFFER_SIZE * 4 ( 2 canales, 16 bit cada uno)
         ret = i2s_channel_write(tx_handle, (char *)&sampleData_out[0].sample, SAMPLE_BUFFER_SIZE * 4, &bytes_write, 1000);
     }
+
     vTaskDelete(NULL);
+}
+
+void shift_right_circular(int16_t *v, size_t size, int offset)
+{
+    if (size == 0 || offset == 0)
+        return;
+    offset %= size;
+    int16_t tmp[offset];
+    memcpy(tmp, &v[size - offset], offset * sizeof(int16_t));
+    memmove(&v[offset], v, (size - offset) * sizeof(int16_t));
+    memcpy(v, tmp, offset * sizeof(int16_t));
+}
+
+void IRAM_ATTR calcula_fft(void)
+{
+
+    int N = SAMPLE_BUFFER_SIZE;
+
+    dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
+
+    // save old pixels for lowpass filter
+    for (int i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+    {
+        pixelold[i] = pixelnew[i];
+    }
+
+    // Generate hann window
+    dsps_wind_hann_f32(wind, N);
+
+    // Convert two input vectors to one complex vector i,q
+    for (int i = 0; i < N; i++)
+    {
+        fft_vector[i * 2 + 0] = i_fft[i] * wind[i];
+        fft_vector[i * 2 + 1] = q_fft[i] * wind[i];
+    }
+
+    // FFT
+    dsps_fft2r_fc32_arp4(fft_vector, N);
+    //  Bit reverse
+    dsps_bit_rev_fc32(fft_vector, N);
+
+    // calculate mag = I*I + Q*Q,
+    // and simultaneously put them into the right order
+    for (int i = 0; i < N / 2; i++)
+    {
+        fft_mag[i + N / 2] = (fft_vector[i * 2] * fft_vector[i * 2] + fft_vector[i * 2 + 1] * fft_vector[i * 2 + 1]);
+        fft_mag[i + 0] = (fft_vector[(i + N / 2) * 2] * fft_vector[(i + N / 2) * 2] + fft_vector[(i + N / 2) * 2 + 1] * fft_vector[(i + N / 2) * 2 + 1]);
+    }
+
+    for (int i = 0; i < N; i++)
+    {
+        fft_mag[i] = 0.6 * fft_mag[i] + 0.4 * fft_mag_old[i];
+        fft_mag_old[i] = fft_mag[i];
+        pixelnew[N - 1 - i] = 20 * log10f_fast(fft_mag[i] * (float)(32768.0f));
+    }
+
+    // Rota 128 a la derecha para corregir el problema con el CANVAS dichoso de LGVL
+
+    shift_right_circular(pixelnew, N, 128);
+
+    if (debug)
+    {
+        Serial.printf("MAGNITUDES ********************************************************\n");
+        for (int i = 0; i < N; i++)
+        {
+            Serial.printf("%i\n", pixelnew[i]);
+        }
+
+        debug = false;
+    }
 }

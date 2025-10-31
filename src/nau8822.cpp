@@ -2,9 +2,9 @@
 #include <nau8822.h>
 #include "driver/i2c_master.h"
 
-#define spi_dat_pin 32
-#define spi_clk_pin 33
-#define nau8822_cs_pin 20
+#define spi_dat_pin 4
+#define spi_clk_pin 3
+#define nau8822_cs_pin 2
 
 #define SPI
 
@@ -277,8 +277,8 @@ frequency is 32x.*/
 		nau8822_register_write_spi(45, 0x070); // PGA para ADC
 		nau8822_register_write_spi(46, 0x170);
 
-		nau8822_register_write_spi(47, 0x050); // LADC a LIN 0 dB
-		nau8822_register_write_spi(48, 0x050); // RADC a RIN 0 dB
+		nau8822_register_write_spi(47, 0x100); // LADC a LIN 0 dB
+		nau8822_register_write_spi(48, 0x100); // RADC a RIN 0 dB
 
 		nau8822_register_write_spi(49, 0x006); // TSEN | SPKBST
 
