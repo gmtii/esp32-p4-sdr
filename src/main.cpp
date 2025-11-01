@@ -20,7 +20,6 @@
 
 #include "ui.h"
 
-
 #define DEMOD_USB 0
 #define DEMOD_LSB 1
 #define DEMOD_AM 2
@@ -36,7 +35,7 @@ const int resolution = 8;
 boolean debug = false;
 boolean bucle = false;
 
-int volume = 30;
+int volume = 0x3f;
 
 int demod_modo = DEMOD_FM;
 
@@ -48,6 +47,45 @@ String demod_modos_texto[7] = {
     "S-L ",
     "S-U ",
     " FM "}; // 6
+
+void test_pin(void)
+
+{
+
+  pinMode(GPIO_NUM_45, OUTPUT);
+  pinMode(GPIO_NUM_46, OUTPUT);
+  pinMode(GPIO_NUM_47, OUTPUT);
+  pinMode(GPIO_NUM_48, OUTPUT);
+  pinMode(GPIO_NUM_5, OUTPUT);
+  pinMode(GPIO_NUM_4, OUTPUT);
+  pinMode(GPIO_NUM_3, OUTPUT);
+  pinMode(GPIO_NUM_2, OUTPUT);
+
+  while (1)
+  {
+    digitalWrite(GPIO_NUM_45, HIGH);
+    digitalWrite(GPIO_NUM_46, HIGH);
+    digitalWrite(GPIO_NUM_47, HIGH);
+    digitalWrite(GPIO_NUM_48, HIGH);
+    digitalWrite(GPIO_NUM_5, HIGH);
+    digitalWrite(GPIO_NUM_4, HIGH);
+    digitalWrite(GPIO_NUM_3, HIGH);
+    digitalWrite(GPIO_NUM_2, HIGH);
+
+    delay(100);
+
+    // digitalWrite(GPIO_NUM_45, LOW);
+    digitalWrite(GPIO_NUM_46, LOW);
+    digitalWrite(GPIO_NUM_47, LOW);
+    digitalWrite(GPIO_NUM_48, LOW);
+    digitalWrite(GPIO_NUM_5, LOW);
+    digitalWrite(GPIO_NUM_4, LOW);
+    digitalWrite(GPIO_NUM_3, LOW);
+    digitalWrite(GPIO_NUM_2, LOW);
+
+    delay(100);
+  }
+}
 
 void setup()
 {
@@ -63,7 +101,7 @@ void setup()
   setup_ldo();
 
   /* Iniciando I2S*/
-  i2s_driver_init(192000);
+  i2s_driver_init(48000);
 
   /* Iniciando CODEC */
   nau8822_init(2); // Modo de inicialización del NAU8822
@@ -79,17 +117,15 @@ void setup()
   xTaskCreatePinnedToCore(sdrTask, "sdrTask", 8192, NULL, 5, NULL, 0);
 
   Serial.println("Setup terminado...");
-  Serial.println("R -reinicia - T -test de pin");
 }
 
 void loop()
 {
+  calcula_fft();
+  spectrum();
 
   lv_task_handler(); // let the GUI do its work
   delay(5);          // let this time pass
-
-  calcula_fft();
-  spectrum();
 
   if (Serial.available())
   {
@@ -145,6 +181,14 @@ void loop()
       Serial.printf("Vol= %d\n", volume);
 
       nau8822_spk_volume(volume);
+      break;
+
+    case 't':
+
+      test_pin();
+
+      while (1)
+        ;
       break;
     }
   }

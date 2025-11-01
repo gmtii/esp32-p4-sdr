@@ -13,9 +13,8 @@
 
 #include "pins_config.h"
 
-#define SAMPLE_RATE (48000)
 #define MCLK_MULTIPLE I2S_MCLK_MULTIPLE_256 // If not using 24-bit data width, 256 should be enough
-#define MCLK_FREQ_HZ (SAMPLE_RATE * MCLK_MULTIPLE)
+
 
 i2s_chan_handle_t tx_handle = NULL;
 i2s_chan_handle_t rx_handle = NULL;

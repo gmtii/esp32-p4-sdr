@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#define SAMPLE_BUFFER_SIZE (1024)
+#define SAMPLE_BUFFER_SIZE (512)
 
 #define SAMPLE_RATE (192000)
 #define FREQ_CONV_OFFSET (SAMPLE_RATE / 4)

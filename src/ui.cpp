@@ -274,5 +274,5 @@ void spectrum(void)
   }
 
   // Dibuja centro de espectro
-  lv_draw_vline(W - 1 ,d 0, H, 5);
+  lv_draw_vline(W - 1 ,0, H, 5);
 }

@@ -214,8 +214,7 @@ void shift_right_circular(int16_t *v, size_t size, int offset)
 
 void IRAM_ATTR calcula_fft(void)
 {
-
-    int N = SAMPLE_BUFFER_SIZE;
+d    int N = SAMPLE_BUFFER_SIZE;
 
     dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
 

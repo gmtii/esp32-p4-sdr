@@ -151,15 +151,6 @@ static void setup_ldo(void)
 {
     esp_ldo_dump(stdout);
 
-    // Create configuration for LDO index 2
-    esp_ldo_channel_config_t config2 = {
-        .chan_id = 3, // discovered by trial and error
-        .voltage_mv = 3300,
-        .flags = {
-            .adjustable = 1,
-            .owned_by_hw = 0,
-            .bypass = 0}};
-
     // Create configuration for LDO index 3
     esp_ldo_channel_config_t config3 = {
         .chan_id = 4, // discovered by trial and error
@@ -169,16 +160,6 @@ static void setup_ldo(void)
             .owned_by_hw = 0,
             .bypass = 0}};
 
-    // Try to acquire both channels
-    if (esp_ldo_acquire_channel(&config2, &ldo2) == ESP_OK)
-    {
-        Serial.println("LDO index 2 acquired");
-    }
-    else
-    {
-        Serial.println("Failed to acquire LDO index 2");
-    }
-
     if (esp_ldo_acquire_channel(&config3, &ldo3) == ESP_OK)
     {
         Serial.println("LDO index 3 acquired");
@@ -186,13 +167,6 @@ static void setup_ldo(void)
     else
     {
         Serial.println("Failed to acquire LDO index 3");
-    }
-
-    // Adjust voltage if you want to set it again (redundant if already set above)
-    if (ldo2)
-    {
-        esp_ldo_channel_adjust_voltage(ldo2, 3300);
-        Serial.println("LDO index 2 voltage adjusted");
     }
 
     if (ldo3)
