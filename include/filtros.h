@@ -9,6 +9,7 @@
 #define IQ_NUM_TAPS 101
 
 #define RX_INTERPOLATE_NUM_TAPS 16
+#define RX_DECIMATE_NUM_TAPS 43
 
 float FirRxInterpolate[16] =
     {

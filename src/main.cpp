@@ -20,6 +20,8 @@
 
 #include "ui.h"
 
+#include "agc.h"
+
 #define DEMOD_USB 0
 #define DEMOD_LSB 1
 #define DEMOD_AM 2
@@ -37,7 +39,7 @@ boolean bucle = false;
 
 int volume = 0x3f;
 
-int demod_modo = DEMOD_FM;
+int demod_modo = DEMOD_LSB;
 
 String demod_modos_texto[7] = {
     "USB ", // 0
@@ -47,45 +49,6 @@ String demod_modos_texto[7] = {
     "S-L ",
     "S-U ",
     " FM "}; // 6
-
-void test_pin(void)
-
-{
-
-  pinMode(GPIO_NUM_45, OUTPUT);
-  pinMode(GPIO_NUM_46, OUTPUT);
-  pinMode(GPIO_NUM_47, OUTPUT);
-  pinMode(GPIO_NUM_48, OUTPUT);
-  pinMode(GPIO_NUM_5, OUTPUT);
-  pinMode(GPIO_NUM_4, OUTPUT);
-  pinMode(GPIO_NUM_3, OUTPUT);
-  pinMode(GPIO_NUM_2, OUTPUT);
-
-  while (1)
-  {
-    digitalWrite(GPIO_NUM_45, HIGH);
-    digitalWrite(GPIO_NUM_46, HIGH);
-    digitalWrite(GPIO_NUM_47, HIGH);
-    digitalWrite(GPIO_NUM_48, HIGH);
-    digitalWrite(GPIO_NUM_5, HIGH);
-    digitalWrite(GPIO_NUM_4, HIGH);
-    digitalWrite(GPIO_NUM_3, HIGH);
-    digitalWrite(GPIO_NUM_2, HIGH);
-
-    delay(100);
-
-    // digitalWrite(GPIO_NUM_45, LOW);
-    digitalWrite(GPIO_NUM_46, LOW);
-    digitalWrite(GPIO_NUM_47, LOW);
-    digitalWrite(GPIO_NUM_48, LOW);
-    digitalWrite(GPIO_NUM_5, LOW);
-    digitalWrite(GPIO_NUM_4, LOW);
-    digitalWrite(GPIO_NUM_3, LOW);
-    digitalWrite(GPIO_NUM_2, LOW);
-
-    delay(100);
-  }
-}
 
 void setup()
 {
@@ -117,6 +80,9 @@ void setup()
   xTaskCreatePinnedToCore(sdrTask, "sdrTask", 8192, NULL, 5, NULL, 0);
 
   Serial.println("Setup terminado...");
+
+  AGC_init();
+  AGC_prep();
 }
 
 void loop()
@@ -184,12 +150,8 @@ void loop()
       break;
 
     case 't':
+    break;
 
-      test_pin();
-
-      while (1)
-        ;
-      break;
     }
   }
 }

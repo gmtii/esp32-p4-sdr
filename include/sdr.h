@@ -8,7 +8,7 @@
 #define SAMPLE_BUFFER_SIZE (512)
 
 #define SAMPLE_RATE (192000)
-#define FREQ_CONV_OFFSET (SAMPLE_RATE / 4)
+#define FREQ_CONV_OFFSET (SAMPLE_RATE / DR)
 
 #define DEMOD_USB 0
 #define DEMOD_LSB 1
@@ -18,7 +18,7 @@
 #define DEMOD_SAMU 5
 #define DEMOD_FM 6
 
-#define DF 4 // decimation factor
+#define DR 4 // decimation factor
 
 void sdrTask(void *args);
 void calcula_fft(void);

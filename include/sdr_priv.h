@@ -35,6 +35,17 @@ float fir_q_State[IQ_NUM_TAPS];
 
 /* --------------------------------------------------------------------------------- */
 
+fir_f32_t firmr_i;
+float firmr_i_State[RX_DECIMATE_NUM_TAPS];
+
+fir_f32_t firmr_q;
+float firmr_q_State[RX_DECIMATE_NUM_TAPS];
+
+fir_f32_t firmr_p;
+float firmr_p_State[RX_INTERPOLATE_NUM_TAPS];
+
+/* --------------------------------------------------------------------------------- */
+
 float audiotmp = 0.0f, w = 0.0f, wold = 0.0f;
 
 /* --------------------------------------------------------------------------------- */
@@ -72,8 +83,10 @@ union
 float i_sample_out[SAMPLE_BUFFER_SIZE], q_sample_out[SAMPLE_BUFFER_SIZE];
 float i_fft[SAMPLE_BUFFER_SIZE], q_fft[SAMPLE_BUFFER_SIZE];
 float i_sample[SAMPLE_BUFFER_SIZE], q_sample[SAMPLE_BUFFER_SIZE];
+float i_sample_d[SAMPLE_BUFFER_SIZE/DR], q_sample_d[SAMPLE_BUFFER_SIZE/DR];
 
 float demod_out[SAMPLE_BUFFER_SIZE];
+float demod_out_d[SAMPLE_BUFFER_SIZE/DR];
 
 int16_t pixelnew[SAMPLE_BUFFER_SIZE];
 int16_t pixelold[SAMPLE_BUFFER_SIZE];

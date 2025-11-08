@@ -13,6 +13,10 @@
 #include "sdr.h"
 #include "sdr_priv.h"
 
+#include "agc.h"
+#include "nr.h"
+#include "sam.h"
+
 float IRAM_ATTR alpha_beta_mag(float inphase, float quadrature)
 // (c) András Retzler
 // taken from libcsdr: https://github.com/simonyiszk/csdr
@@ -58,6 +62,13 @@ void IRAM_ATTR sdrTask(void *args)
 
     dsps_fir_init_f32(&fir_q, FIR_HILB_RX_Q_coeffs, fir_q_State, IQ_NUM_TAPS);
 
+    /* FIR MR para decimar/interpolar */
+
+    dsps_firmr_init_f32(&firmr_i, FirRxDecimate, firmr_i_State, RX_DECIMATE_NUM_TAPS, 1, 4, 0);
+    dsps_firmr_init_f32(&firmr_q, FirRxDecimate, firmr_q_State, RX_DECIMATE_NUM_TAPS, 1, 4, 0);
+
+    dsps_firmr_init_f32(&firmr_p, FirRxInterpolate, firmr_p_State, RX_INTERPOLATE_NUM_TAPS, 4, 1, 0);
+
     int i = 0;
 
     while (1)
@@ -75,7 +86,7 @@ void IRAM_ATTR sdrTask(void *args)
             q_fft[i] = q_sample[i];
         }
 
-        if (demod_modo != DEMOD_FM)
+        if (demod_modo != DEMOD_FM && !bucle)
         {
             // Ya estamos en CODEC_SAMPLERATE
             // Hago una conversion de frecuencia a SR/4
@@ -103,16 +114,19 @@ void IRAM_ATTR sdrTask(void *args)
                 q_sample[i + 3] = hh2;
             }
 
+            dsps_firmr_f32(&firmr_i, i_sample, i_sample_d, SAMPLE_BUFFER_SIZE);
+            dsps_firmr_f32(&firmr_q, q_sample, q_sample_d, SAMPLE_BUFFER_SIZE);
+
             if (demod_modo == DEMOD_USB || demod_modo == DEMOD_LSB) // En AM/SAM/FM no aplicamos desfase a Q
             {
-                dsps_fir_f32(&fir_i, i_sample, i_sample_out, SAMPLE_BUFFER_SIZE);
-                dsps_fir_f32(&fir_q, q_sample, q_sample_out, SAMPLE_BUFFER_SIZE);
+                dsps_fir_f32(&fir_i, i_sample_d, i_sample_out, SAMPLE_BUFFER_SIZE / DR);
+                dsps_fir_f32(&fir_q, q_sample_d, q_sample_out, SAMPLE_BUFFER_SIZE / DR);
             }
             else
             {
                 // Filtros AM
-                dsps_biquad_f32_arp4(i_sample, i_sample_out, SAMPLE_BUFFER_SIZE, coeffs_am, w_lpf_i);
-                dsps_biquad_f32_arp4(q_sample, q_sample_out, SAMPLE_BUFFER_SIZE, coeffs_am, w_lpf_q);
+                dsps_biquad_f32_arp4(i_sample_d, i_sample_out, SAMPLE_BUFFER_SIZE / DR, coeffs_am, w_lpf_i);
+                dsps_biquad_f32_arp4(q_sample_d, q_sample_out, SAMPLE_BUFFER_SIZE / DR, coeffs_am, w_lpf_q);
             }
         }
 
@@ -144,22 +158,25 @@ void IRAM_ATTR sdrTask(void *args)
             break;
 
         case DEMOD_USB:
-            dsps_add_f32(i_sample_out, q_sample_out, demod_out, SAMPLE_BUFFER_SIZE, 1, 1, 1); // Demodula USB
+            dsps_add_f32(i_sample_out, q_sample_out, demod_out_d, SAMPLE_BUFFER_SIZE / DR, 1, 1, 1); // Demodula USB
             break;
 
         case DEMOD_LSB:
-            dsps_sub_f32(i_sample_out, q_sample_out, demod_out, SAMPLE_BUFFER_SIZE, 1, 1, 1); // Demodula LSB
+            dsps_sub_f32(i_sample_out, q_sample_out, demod_out_d, SAMPLE_BUFFER_SIZE / DR, 1, 1, 1); // Demodula LSB
             break;
 
-        case DEMOD_SAM: 
+        case DEMOD_SAM:
         case DEMOD_SAML:
         case DEMOD_SAMU:
+            SAM(i_sample_out, q_sample_out, demod_out_d, SAMPLE_BUFFER_SIZE / DR, demod_modo);
+            break;
+
         case DEMOD_AM: // Demodula AM con las IQ resultantes del LPF
-            for (i = 0; i < SAMPLE_BUFFER_SIZE; i++)
+            for (i = 0; i < SAMPLE_BUFFER_SIZE / DR; i++)
             {
                 audiotmp = alpha_beta_mag(i_sample_out[i], q_sample_out[i]);
                 w = audiotmp + wold * 0.9999f; // yes, I want a superb bass response ;-)
-                demod_out[i] = w - wold;
+                demod_out_d[i] = w - wold;
                 wold = w;
             }
             break;
@@ -169,6 +186,14 @@ void IRAM_ATTR sdrTask(void *args)
 
         if (!bucle)
         {
+
+            if (demod_modo != DEMOD_FM)
+            {
+                NR(2, demod_out_d, SAMPLE_BUFFER_SIZE / DR);
+                RxAGC(demod_out_d, SAMPLE_BUFFER_SIZE / DR);
+                dsps_firmr_f32(&firmr_p, demod_out_d, demod_out, SAMPLE_BUFFER_SIZE / DR);
+            }
+
             for (i = 0; i < SAMPLE_BUFFER_SIZE; i++) // convierte a int16
             {
                 sampleData_out[i].ch[0] = int16_t(demod_out[i] * (float)32768.0f);
@@ -214,7 +239,7 @@ void shift_right_circular(int16_t *v, size_t size, int offset)
 
 void IRAM_ATTR calcula_fft(void)
 {
-d    int N = SAMPLE_BUFFER_SIZE;
+    int N = SAMPLE_BUFFER_SIZE;
 
     dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
 
