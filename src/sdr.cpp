@@ -17,6 +17,9 @@
 #include "nr.h"
 #include "sam.h"
 
+extern int nr_mode;
+extern int agc_mode;
+
 float IRAM_ATTR alpha_beta_mag(float inphase, float quadrature)
 // (c) András Retzler
 // taken from libcsdr: https://github.com/simonyiszk/csdr
@@ -52,7 +55,7 @@ void IRAM_ATTR sdrTask(void *args)
     float w_lpf_i[5] = {0, 0};
     float w_lpf_q[5] = {0, 0};
 
-    dsps_biquad_gen_lpf_f32(coeffs_am, 0.05, 1); // Q=3
+    dsps_biquad_gen_lpf_f32(coeffs_am, 0.1, 1); // Q=3
 
     // Filtros FIR de I para SSB DSP ESP32 S3 (parecen algo más rápidoss que los CMSIS)
 
@@ -189,7 +192,7 @@ void IRAM_ATTR sdrTask(void *args)
 
             if (demod_modo != DEMOD_FM)
             {
-                NR(2, demod_out_d, SAMPLE_BUFFER_SIZE / DR);
+                NR(nr_mode, demod_out_d, SAMPLE_BUFFER_SIZE / DR);
                 RxAGC(demod_out_d, SAMPLE_BUFFER_SIZE / DR);
                 dsps_firmr_f32(&firmr_p, demod_out_d, demod_out, SAMPLE_BUFFER_SIZE / DR);
             }

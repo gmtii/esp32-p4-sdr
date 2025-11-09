@@ -38,6 +38,7 @@ boolean debug = false;
 boolean bucle = false;
 
 int volume = 0x3f;
+int nr_mode = 0;
 
 int demod_modo = DEMOD_LSB;
 
@@ -49,8 +50,6 @@ String demod_modos_texto[7] = {
     "S-L ",
     "S-U ",
     " FM "}; // 6
-
-
 
 void setup()
 {
@@ -75,6 +74,10 @@ void setup()
 
   nau8822_spk_volume(0x3F);
 
+  /* AGC */
+  AGC_init();
+  AGC_prep();
+
   /* Init UI*/
 
   init_ui();
@@ -82,9 +85,6 @@ void setup()
   xTaskCreatePinnedToCore(sdrTask, "sdrTask", 8192, NULL, 5, NULL, 0);
 
   Serial.println("Setup terminado...");
-
-  AGC_init();
-  AGC_prep();
 }
 
 void loop()
@@ -152,8 +152,7 @@ void loop()
       break;
 
     case 't':
-    break;
-
+      break;
     }
   }
 }

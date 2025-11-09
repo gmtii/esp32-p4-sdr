@@ -9,7 +9,11 @@
 #include "ui.h"
 #include "ui_priv.h"
 
+#include "agc.h"
+
 extern int demod_modo;
+extern int nr_mode;
+extern agc_wdsp_params_t agc_wdsp_conf;
 
 extern String demod_modos_texto[7];
 
@@ -278,6 +282,27 @@ void btn_event_cb(lv_event_t *e)
 
       lv_label_set_text_fmt(label1, "%s", demod_modos_texto[demod_modo]);
     }
+
+    if (obj == btn2)
+    {
+      nr_mode++;
+      if (nr_mode > 2)
+        nr_mode = 0;
+
+      lv_label_set_text_fmt(label2, "NR=%d", nr_mode);
+    }
+
+    if (obj == btn3)
+    {
+      agc_wdsp_conf.AGC_mode++;
+      if (agc_wdsp_conf.AGC_mode > 5)
+        agc_wdsp_conf.AGC_mode = 0;
+
+      agc_wdsp_conf.agc_switch_mode = 1;
+      AGC_prep();
+
+      lv_label_set_text_fmt(label3, "AGC = %d", agc_wdsp_conf.AGC_mode);
+    }
   }
 }
 
@@ -290,6 +315,9 @@ void dibuja_botones(void)
   lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 10, -10); // margen de 10 px desde el borde
   lv_obj_add_event_cb(btn1, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_set_style_bg_color(btn1, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn1, lv_color_hex(0x404040), LV_PART_MAIN);
+
   label1 = lv_label_create(btn1);
   lv_label_set_text_fmt(label1, "%s", demod_modos_texto[demod_modo]);
   lv_obj_center(label1);
@@ -300,10 +328,12 @@ void dibuja_botones(void)
   lv_obj_align(btn2, LV_ALIGN_BOTTOM_LEFT, 120, -10);
   lv_obj_add_event_cb(btn2, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-  label2 = lv_label_create(btn2);
-  lv_label_set_text_fmt(label2, "", 0);
-  lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 10, -10); // margen de 10 px desde el borde
+  lv_obj_set_style_bg_color(btn2, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn2, lv_color_hex(0x404040), LV_PART_MAIN);
 
+  label2 = lv_label_create(btn2);
+  lv_label_set_text_fmt(label2, "NR=%d", nr_mode);
+  lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 10, -10); // margen de 10 px desde el borde
   lv_obj_center(label2);
 
   /* --- Botón 3 --- */
@@ -312,8 +342,11 @@ void dibuja_botones(void)
   lv_obj_align(btn3, LV_ALIGN_BOTTOM_LEFT, 230, -10);
   lv_obj_add_event_cb(btn3, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_set_style_bg_color(btn3, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn3, lv_color_hex(0x404040), LV_PART_MAIN);
+
   label3 = lv_label_create(btn3);
-  lv_label_set_text_fmt(label3, "R=", 0);
+  lv_label_set_text_fmt(label3, "AGC = %d", agc_wdsp_conf.AGC_mode);
   lv_obj_center(label3);
 
   /* --- Botón 4 --- */
@@ -322,8 +355,11 @@ void dibuja_botones(void)
   lv_obj_align(btn4, LV_ALIGN_BOTTOM_LEFT, 340, -10);
   lv_obj_add_event_cb(btn4, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_set_style_bg_color(btn4, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn3, lv_color_hex(0x404040), LV_PART_MAIN);
+
   label4 = lv_label_create(btn4);
-  lv_label_set_text_fmt(label4, "M=", 0);
+  lv_label_set_text_fmt(label4, "", 0);
   lv_obj_center(label4);
 
   /* --- Botón 5 --- */
@@ -332,8 +368,11 @@ void dibuja_botones(void)
   lv_obj_align(btn5, LV_ALIGN_BOTTOM_LEFT, 450, -10);
   lv_obj_add_event_cb(btn5, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_set_style_bg_color(btn5, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn5, lv_color_hex(0x404040), LV_PART_MAIN);
+
   label5 = lv_label_create(btn5);
-  lv_label_set_text_fmt(label5, "B=", 0);
+  lv_label_set_text_fmt(label5, "", 0);
   lv_obj_center(label5);
 
   /* --- Botón 6 --- */
@@ -342,7 +381,10 @@ void dibuja_botones(void)
   lv_obj_align(btn6, LV_ALIGN_BOTTOM_LEFT, 560, -10);
   lv_obj_add_event_cb(btn6, btn_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_set_style_bg_color(btn6, lv_color_hex(0x202020), LV_PART_MAIN);
+  lv_obj_set_style_border_color(btn6, lv_color_hex(0x404040), LV_PART_MAIN);
+
   label6 = lv_label_create(btn6);
-  lv_label_set_text_fmt(label6, "I=", 0);
+  lv_label_set_text_fmt(label6, "", 0);
   lv_obj_center(label6);
 }
