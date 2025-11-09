@@ -13,6 +13,13 @@
 #include "sdr.h"
 
 
+// AGC espectro
+
+int spec_agc = 1;
+int spec_offset = 0;
+int spec_offset_old = 0;
+int spec_rebote = 0;
+
 /* --------------------------------------------------------------------------------- */
 
 extern boolean debug;

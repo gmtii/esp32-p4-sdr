@@ -70,7 +70,7 @@ float hang_decay_mult;
 void AGC_init(void)
 {
     agc_wdsp_conf.agc_action = 0;
-    agc_wdsp_conf.AGC_mode = 1;
+    agc_wdsp_conf.AGC_mode = 5;
     agc_wdsp_conf.agc_switch_mode = 1;
     agc_wdsp_conf.agc_thresh = 30;
     agc_wdsp_conf.agc_slope = 100;

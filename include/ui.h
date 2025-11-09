@@ -7,3 +7,4 @@
 void spectrum(void);
 void init_ui(void);
 void nuevo(void);
+void dibuja_botones(void);

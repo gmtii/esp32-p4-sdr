@@ -106,7 +106,7 @@ static void lvgl_begin(void)
     lv_init();
 
     // === Buffer parcial: N líneas ===
-    size_t px_cnt = (size_t)LCD_H_RES * LCD_V_RES;  // nº de píxeles del buffer
+    size_t px_cnt = (size_t)LCD_H_RES * LCD_V_RES / 10 ;  // nº de píxeles del buffer
     size_t buf_bytes = px_cnt * sizeof(lv_color_t); // bytes reales
 
     // Reserva en PSRAM DMA-capable

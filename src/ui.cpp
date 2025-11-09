@@ -6,30 +6,12 @@
 
 #include "lvgl.h"
 
-extern int16_t pixelnew[SAMPLE_BUFFER_SIZE];
-extern int16_t pixelold[SAMPLE_BUFFER_SIZE];
+#include "ui.h"
+#include "ui_priv.h"
 
-static lv_obj_t *waveform_canvas;
-static lv_obj_t *screen;
-static lv_style_t border_style;
-static lv_style_t popupBox_style;
+extern int demod_modo;
 
-#define WAVEFORM_WIDTH SAMPLE_BUFFER_SIZE
-#define WAVEFORM_HEIGHT 256
-
-// Offset y máxima altura. Para controlar el espectro.
-int spectrum_y = 0; // upper edge
-int spectrum_x = 0;
-int spectrum_height = WAVEFORM_HEIGHT;
-
-#define W WAVEFORM_WIDTH
-#define H WAVEFORM_HEIGHT
-
-/* bytes por fila en I4 = ceil(W/2) */
-#define ROW_BYTES ((W + 1) / 2)
-#define BUF_SIZE (ROW_BYTES * H)
-
-static uint8_t waveformbuffer[BUF_SIZE] __attribute__((aligned(32)));
+extern String demod_modos_texto[7];
 
 // Dibuja un píxel en coordenadas (x,y) con color = índice 0..15
 void lv_draw_pixel(uint16_t x, uint16_t y, uint8_t color_idx)
@@ -137,6 +119,8 @@ void init_ui()
   lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
 
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+
+  dibuja_botones();
 
   memset(waveformbuffer, 0x00, BUF_SIZE); // índice 0 (negro)
 
@@ -274,5 +258,91 @@ void spectrum(void)
   }
 
   // Dibuja centro de espectro
-  lv_draw_vline(W - 1 ,0, H, 5);
+  lv_draw_vline(W - 1, 0, H, 5);
+}
+
+void btn_event_cb(lv_event_t *e)
+{
+
+  lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t *obj = lv_event_get_target_obj(e);
+
+  if (code == LV_EVENT_CLICKED)
+  {
+
+    if (obj == btn1)
+    {
+      demod_modo--;
+      if (demod_modo < 0)
+        demod_modo = 6;
+
+      lv_label_set_text_fmt(label1, "%s", demod_modos_texto[demod_modo]);
+    }
+  }
+}
+
+void dibuja_botones(void)
+{
+
+  /* --- Botón 1--- */
+  btn1 = lv_btn_create(screen);
+  lv_obj_set_size(btn1, 100, 50);
+  lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 10, -10); // margen de 10 px desde el borde
+  lv_obj_add_event_cb(btn1, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label1 = lv_label_create(btn1);
+  lv_label_set_text_fmt(label1, "%s", demod_modos_texto[demod_modo]);
+  lv_obj_center(label1);
+
+  /* --- Botón 2 --- */
+  btn2 = lv_btn_create(screen);
+  lv_obj_set_size(btn2, 100, 50);
+  lv_obj_align(btn2, LV_ALIGN_BOTTOM_LEFT, 120, -10);
+  lv_obj_add_event_cb(btn2, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label2 = lv_label_create(btn2);
+  lv_label_set_text_fmt(label2, "", 0);
+  lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 10, -10); // margen de 10 px desde el borde
+
+  lv_obj_center(label2);
+
+  /* --- Botón 3 --- */
+  btn3 = lv_btn_create(screen);
+  lv_obj_set_size(btn3, 100, 50);
+  lv_obj_align(btn3, LV_ALIGN_BOTTOM_LEFT, 230, -10);
+  lv_obj_add_event_cb(btn3, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label3 = lv_label_create(btn3);
+  lv_label_set_text_fmt(label3, "R=", 0);
+  lv_obj_center(label3);
+
+  /* --- Botón 4 --- */
+  btn4 = lv_btn_create(screen);
+  lv_obj_set_size(btn4, 100, 50);
+  lv_obj_align(btn4, LV_ALIGN_BOTTOM_LEFT, 340, -10);
+  lv_obj_add_event_cb(btn4, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label4 = lv_label_create(btn4);
+  lv_label_set_text_fmt(label4, "M=", 0);
+  lv_obj_center(label4);
+
+  /* --- Botón 5 --- */
+  btn5 = lv_btn_create(screen);
+  lv_obj_set_size(btn5, 100, 50);
+  lv_obj_align(btn5, LV_ALIGN_BOTTOM_LEFT, 450, -10);
+  lv_obj_add_event_cb(btn5, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label5 = lv_label_create(btn5);
+  lv_label_set_text_fmt(label5, "B=", 0);
+  lv_obj_center(label5);
+
+  /* --- Botón 6 --- */
+  btn6 = lv_btn_create(screen);
+  lv_obj_set_size(btn6, 100, 50);
+  lv_obj_align(btn6, LV_ALIGN_BOTTOM_LEFT, 560, -10);
+  lv_obj_add_event_cb(btn6, btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+  label6 = lv_label_create(btn6);
+  lv_label_set_text_fmt(label6, "I=", 0);
+  lv_obj_center(label6);
 }

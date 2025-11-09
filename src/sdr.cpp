@@ -272,12 +272,44 @@ void IRAM_ATTR calcula_fft(void)
         fft_mag[i + 0] = (fft_vector[(i + N / 2) * 2] * fft_vector[(i + N / 2) * 2] + fft_vector[(i + N / 2) * 2 + 1] * fft_vector[(i + N / 2) * 2 + 1]);
     }
 
+    int spec_min = 0;
+    int spec_max = 0;
+
     for (int i = 0; i < N; i++)
     {
         fft_mag[i] = 0.6 * fft_mag[i] + 0.4 * fft_mag_old[i];
         fft_mag_old[i] = fft_mag[i];
         pixelnew[N - 1 - i] = 20 * log10f_fast(fft_mag[i] * (float)(32768.0f));
+
+        if (spec_min > pixelnew[i]) // Calcula el valor mínimo del vector pixelnew
+            spec_min = pixelnew[i];
+
+        if (spec_max < pixelnew[i]) // valor máximo
+            spec_max = pixelnew[i];
     }
+
+    spec_offset = (spec_offset + 9 * spec_offset_old) / 10;
+
+    if (spec_min < -15 && spec_offset < 5) // estamos muy abajo, subimos el espectro a ritmo de *spec_agc
+        spec_offset += 3 * spec_agc;
+    else if (spec_min < 0 && spec_offset < 25 && spec_rebote++ > 3) // no tan abajo, subimos a ritmo spec_agc
+    {
+        spec_offset += spec_agc;
+        spec_rebote = 0;
+    }
+    else if (spec_max > WAVEFORM_HEIGHT / 2 && spec_rebote++ > 3) // muy altos, bajamos a ritmo de spec_agc
+    {
+        spec_offset -= spec_agc;
+        spec_rebote = 0;
+    }
+
+    if (spec_offset > WAVEFORM_HEIGHT / 2)
+        spec_offset = WAVEFORM_HEIGHT / 2; // corrección para el caso de offset disparado
+
+    spec_offset_old = spec_offset;
+
+    for (int i = 0; i < N; i++) // aplica el "offset" al espectro para ajustar
+        pixelnew[i] += spec_offset;
 
     // Rota 128 a la derecha para corregir el problema con el CANVAS dichoso de LGVL
 
